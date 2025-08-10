@@ -69,7 +69,11 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add companies.json previous_jobs.json token.pickle
+        git add companies.json previous_jobs.json
+        # Add token.pickle only if it exists
+        if [ -f token.pickle ]; then
+          git add token.pickle
+        fi
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
