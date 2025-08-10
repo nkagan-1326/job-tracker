@@ -1,0 +1,78 @@
+name: Daily Job Tracker
+
+on:
+  schedule:
+    # Run daily at 9 AM PST (5 PM UTC)
+    - cron: '0 17 * * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      test_mode:
+        description: 'Run in test mode'
+        required: false
+        default: 'false'
+
+jobs:
+  track-jobs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Create Gmail credentials file
+      run: |
+        echo '${{ secrets.GMAIL_CREDENTIALS }}' > credentials.json
+    
+    - name: Restore previous data
+      run: |
+        # Create empty files if they don't exist
+        touch companies.json previous_jobs.json
+        if [ ! -s companies.json ]; then
+          echo '{}' > companies.json
+        fi
+        if [ ! -s previous_jobs.json ]; then
+          echo '{}' > previous_jobs.json
+        fi
+    
+    - name: Run job tracker
+      env:
+        SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+        SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+        RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        TEST_MODE: ${{ github.event.inputs.test_mode }}
+      run: |
+        python job_tracker.py
+    
+    - name: Commit and push updated data
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add companies.json previous_jobs.json token.pickle
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update tracked companies and job data - $(date)"
+          git push
+        fi
