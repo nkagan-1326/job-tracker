@@ -97,21 +97,39 @@ class JobTracker:
     def extract_email_body(self, payload):
         """Extract text content from email payload"""
         body = ""
+        
+        # Handle multipart emails
         if 'parts' in payload:
             for part in payload['parts']:
-                if part['mimeType'] == 'text/plain':
+                if part['mimeType'] == 'text/plain' and 'data' in part['body']:
                     data = part['body']['data']
                     body = base64.urlsafe_b64decode(data).decode('utf-8')
                     break
-        elif payload['mimeType'] == 'text/plain':
+                elif part['mimeType'] == 'text/html' and 'data' in part['body'] and not body:
+                    # Fall back to HTML if no plain text
+                    data = part['body']['data']
+                    html_content = base64.urlsafe_b64decode(data).decode('utf-8')
+                    # Strip HTML tags for basic text extraction
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    body = soup.get_text()
+        # Handle single part emails
+        elif payload['mimeType'] == 'text/plain' and 'data' in payload['body']:
             data = payload['body']['data']
             body = base64.urlsafe_b64decode(data).decode('utf-8')
+        elif payload['mimeType'] == 'text/html' and 'data' in payload['body']:
+            data = payload['body']['data']
+            html_content = base64.urlsafe_b64decode(data).decode('utf-8')
+            # Strip HTML tags for basic text extraction
+            soup = BeautifulSoup(html_content, 'html.parser')
+            body = soup.get_text()
         
         return body
     
     def parse_funded_hiring_email(self, email_body):
         """Parse company info from 'Funded and Hiring' email"""
         companies = {}
+        
+        print(f"Parsing email body of length: {len(email_body)}")
         
         # Look for company names followed by funding info
         lines = email_body.split('\n')
@@ -122,14 +140,9 @@ class JobTracker:
             
             # Skip empty lines and common newsletter text
             if not line or any(skip in line.lower() for skip in [
-                'funded', 'hiring', 'newsletter', 'subscribe', 'forwarded', 
-                'biweekly', 'startup funding', 'job alerts', 'stay up to date'
+                'funded & hiring', 'biweekly newsletter', 'subscribe', 'forwarded', 
+                'startup funding', 'job alerts', 'stay up to date', 'sunday'
             ]):
-                continue
-            
-            # Look for lines that start with funding amount (these follow company names)
-            if line.startswith('Funding Amount:') and current_company:
-                # Previous line should be the company name
                 continue
             
             # Look for company names - typically standalone lines before funding info
@@ -181,9 +194,14 @@ class JobTracker:
             if company not in self.companies:
                 self.companies[company] = info
                 added_count += 1
-                print(f"Added new company: {company}")
+                print(f"Added new company to tracking: {company}")
+            else:
+                print(f"Company already being tracked: {company}")
         
-        self.save_data()
+        if added_count > 0:
+            self.save_data()
+            print(f"Saved {added_count} new companies to companies.json")
+        
         return added_count
     
     def scrape_job_page(self, url, company_name):
@@ -419,16 +437,26 @@ class JobTracker:
         # Look for emails from the last 7 days
         emails = self.get_recent_emails(gmail_service, days_back=7)
         
+        print(f"Processing {len(emails)} emails...")
+        
         new_companies_added = 0
-        for email in emails:
-            print("Processing email...")
+        for i, email in enumerate(emails):
+            print(f"Processing email {i+1}...")
+            print(f"Email body length: {len(email['body'])} characters")
+            print(f"First 500 characters of email body:")
+            print(email['body'][:500])
+            print("=" * 50)
+            
             # Parse companies from email
             companies_from_email = self.parse_funded_hiring_email(email['body'])
+            
+            print(f"Companies found in this email: {list(companies_from_email.keys())}")
             
             # Add new companies to tracking
             added = self.add_companies_to_tracking(companies_from_email)
             new_companies_added += added
         
+        print(f"Total new companies added: {new_companies_added}")
         return new_companies_added
     
     def run_daily_check(self):
@@ -443,6 +471,8 @@ class JobTracker:
             new_companies = self.check_new_funded_hiring_emails(gmail_service)
             if new_companies > 0:
                 print(f"Added {new_companies} new companies from recent emails")
+            else:
+                print("No new companies added from recent emails")
             
             # Check all tracked companies for new jobs
             print(f"Checking {len(self.companies)} companies for new job postings...")
