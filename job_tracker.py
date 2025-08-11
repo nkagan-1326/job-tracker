@@ -70,10 +70,13 @@ class JobTracker:
         
         # Search for emails
         query = f'subject:"funded and hiring" after:{since_date}'
+        print(f"Searching Gmail with query: {query}")
+        
         results = gmail_service.users().messages().list(
             userId='me', q=query).execute()
         
         messages = results.get('messages', [])
+        print(f"Found {len(messages)} emails matching search")
         
         email_contents = []
         for message in messages:
@@ -110,39 +113,65 @@ class JobTracker:
         """Parse company info from 'Funded and Hiring' email"""
         companies = {}
         
-        # Pattern to match company entries with links
-        # Assumes format like: "Company Name - Description\nWebsite: https://...\nJobs: https://..."
+        # Look for company names followed by funding info
         lines = email_body.split('\n')
         
         current_company = None
-        for line in lines:
+        for i, line in enumerate(lines):
             line = line.strip()
             
-            # Look for company names (usually standalone lines or start with capital)
-            if line and not line.startswith(('http', 'www', 'Website:', 'Jobs:', 'Careers:')):
-                # Check if this looks like a company name
-                if len(line) < 100 and not any(word in line.lower() for word in ['the', 'and', 'funded', 'hiring']):
-                    # Extract company name (remove description after dash/hyphen)
-                    company_name = re.split(r'\s*[-–—]\s*', line)[0].strip()
-                    if company_name:
-                        current_company = company_name
-                        companies[current_company] = {
-                            'website': '',
-                            'jobs_page': '',
-                            'date_added': datetime.now().isoformat()
-                        }
+            # Skip empty lines and common newsletter text
+            if not line or any(skip in line.lower() for skip in [
+                'funded', 'hiring', 'newsletter', 'subscribe', 'forwarded', 
+                'biweekly', 'startup funding', 'job alerts', 'stay up to date'
+            ]):
+                continue
             
-            # Look for website and job links
-            elif current_company and ('http' in line or 'www' in line):
-                urls = re.findall(r'https?://[^\s]+', line)
-                for url in urls:
-                    url = url.rstrip('.,;)')  # Clean trailing punctuation
-                    
-                    if any(keyword in line.lower() for keyword in ['job', 'career', 'hiring']):
-                        companies[current_company]['jobs_page'] = url
-                    elif not companies[current_company]['website']:
+            # Look for lines that start with funding amount (these follow company names)
+            if line.startswith('Funding Amount:') and current_company:
+                # Previous line should be the company name
+                continue
+            
+            # Look for company names - typically standalone lines before funding info
+            next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            
+            # If next line starts with "Funding Amount:", current line is likely company name
+            if next_line.startswith('Funding Amount:') and line:
+                # Clean up company name (remove any formatting)
+                company_name = line.strip()
+                # Remove any common prefixes or suffixes
+                company_name = re.sub(r'^[•\-\*\s]+', '', company_name)
+                company_name = re.sub(r'\s+$', '', company_name)
+                
+                if company_name and len(company_name) < 100:
+                    current_company = company_name
+                    companies[current_company] = {
+                        'website': '',
+                        'jobs_page': '',
+                        'date_added': datetime.now().isoformat()
+                    }
+                    print(f"Found company: {company_name}")
+            
+            # Look for any URLs in the content that might be company websites
+            urls = re.findall(r'https?://[^\s\)]+', line)
+            for url in urls:
+                # Clean the URL
+                url = url.rstrip('.,;)')
+                
+                # Skip common newsletter/tracking URLs
+                if any(skip in url.lower() for skip in [
+                    'subscribe', 'unsubscribe', 'track', 'utm_', 'mailchi',
+                    'email', 'newsletter', 'substack'
+                ]):
+                    continue
+                
+                # If we have a current company, assign the URL
+                if current_company and current_company in companies:
+                    if not companies[current_company]['website']:
                         companies[current_company]['website'] = url
+                        print(f"Found URL for {current_company}: {url}")
         
+        print(f"Parsed {len(companies)} companies from email")
         return companies
     
     def add_companies_to_tracking(self, new_companies):
@@ -392,6 +421,7 @@ class JobTracker:
         
         new_companies_added = 0
         for email in emails:
+            print("Processing email...")
             # Parse companies from email
             companies_from_email = self.parse_funded_hiring_email(email['body'])
             
