@@ -68,31 +68,49 @@ class JobTracker:
         # Calculate date for search
         since_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
         
-        # Search for emails
-        query = f'subject:"funded and hiring" after:{since_date}'
-        print(f"Searching Gmail with query: {query}")
+        # Try multiple search queries
+        search_queries = [
+            f'subject:"funded and hiring" after:{since_date}',
+            f'subject:"funded & hiring" after:{since_date}',
+            f'funded hiring after:{since_date}',
+            f'subject:funded subject:hiring after:{since_date}'
+        ]
         
-        results = gmail_service.users().messages().list(
-            userId='me', q=query).execute()
+        all_email_contents = []
         
-        messages = results.get('messages', [])
-        print(f"Found {len(messages)} emails matching search")
-        
-        email_contents = []
-        for message in messages:
-            msg = gmail_service.users().messages().get(
-                userId='me', id=message['id']).execute()
+        for query in search_queries:
+            print(f"Searching Gmail with query: {query}")
             
-            # Extract email body
-            payload = msg['payload']
-            body = self.extract_email_body(payload)
-            if body:
-                email_contents.append({
-                    'date': msg['internalDate'],
-                    'body': body
-                })
+            results = gmail_service.users().messages().list(
+                userId='me', q=query).execute()
+            
+            messages = results.get('messages', [])
+            print(f"Found {len(messages)} emails with query: {query}")
+            
+            for message in messages:
+                msg = gmail_service.users().messages().get(
+                    userId='me', id=message['id']).execute()
+                
+                # Get subject line for debugging
+                headers = msg['payload'].get('headers', [])
+                subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
+                print(f"Email subject: {subject}")
+                
+                # Extract email body
+                payload = msg['payload']
+                body = self.extract_email_body(payload)
+                if body:
+                    all_email_contents.append({
+                        'date': msg['internalDate'],
+                        'body': body,
+                        'subject': subject
+                    })
+            
+            if messages:
+                break  # Stop after first successful query
         
-        return email_contents
+        print(f"Total emails found across all queries: {len(all_email_contents)}")
+        return all_email_contents
     
     def extract_email_body(self, payload):
         """Extract text content from email payload"""
