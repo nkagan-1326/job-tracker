@@ -452,14 +452,18 @@ class JobTracker:
     
     def check_new_funded_hiring_emails(self, gmail_service):
         """Check for new 'Funded and Hiring' emails and parse them"""
-        # Look for emails from the last 7 days
+        # First try with 7 days, then try 30 days if nothing found
         emails = self.get_recent_emails(gmail_service, days_back=7)
+        
+        if not emails:
+            print("No emails found in last 7 days, trying last 30 days...")
+            emails = self.get_recent_emails(gmail_service, days_back=30)
         
         print(f"Processing {len(emails)} emails...")
         
         new_companies_added = 0
         for i, email in enumerate(emails):
-            print(f"Processing email {i+1}...")
+            print(f"Processing email {i+1}: {email.get('subject', 'No Subject')}")
             print(f"Email body length: {len(email['body'])} characters")
             print(f"First 500 characters of email body:")
             print(email['body'][:500])
